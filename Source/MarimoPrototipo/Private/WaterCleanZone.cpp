@@ -9,6 +9,7 @@
 #include "Kismet/KismetRenderingLibrary.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "WaterCleanProgressSubsystem.h"
+#include "TextureResource.h"
 
 AWaterCleanZone::AWaterCleanZone()
 {
@@ -63,9 +64,13 @@ void AWaterCleanZone::BeginPlay()
 
     // Coarse progress grid
     const int32 NumCells = ProgressRes * ProgressRes;
-    CellDirty.Init(true, NumCells);
-    CellCleaned.Init(false, NumCells);
-    Total = NumCells;
+    CellCleaned.Init(false, ProgressRes * ProgressRes);
+    BuildDirtyCellsFromShape();
+
+    if (MID && ShapeMask)
+    {
+        MID->SetTextureParameterValue(TEXT("ShapeMask"), ShapeMask);
+    }
 
     // Overlap events drive the cleaner component
     Bounds->OnComponentBeginOverlap.AddDynamic(this, &AWaterCleanZone::OnBoundsBeginOverlap);
@@ -249,6 +254,44 @@ void AWaterCleanZone::FlushStamps()
     {
         OnZoneCleaned.Broadcast(this);
     }
+}
+
+void AWaterCleanZone::BuildDirtyCellsFromShape()
+{
+    const int32 NumCells = ProgressRes * ProgressRes;
+    CellDirty.Init(true, NumCells);
+
+    if (ShapeMask)
+    {
+        FTexturePlatformData* PD = ShapeMask->GetPlatformData();
+        if (PD && PD->Mips.Num() > 0 && PD->PixelFormat == PF_B8G8R8A8)
+        {
+            FTexture2DMipMap& Mip = PD->Mips[0];
+            const int32 W = Mip.SizeX;
+            const int32 H = Mip.SizeY;
+            const uint8* Data = static_cast<const uint8*>(Mip.BulkData.LockReadOnly());
+            if (Data)
+            {
+                for (int32 y = 0; y < ProgressRes; ++y)
+                {
+                    for (int32 x = 0; x < ProgressRes; ++x)
+                    {
+                        const int32 px = FMath::Clamp(int32((x + 0.5f) / ProgressRes * W), 0, W - 1);
+                        const int32 py = FMath::Clamp(int32((y + 0.5f) / ProgressRes * H), 0, H - 1);
+                        const uint8 R = Data[(py * W + px) * 4 + 2];   // BGRA: R is byte 2
+                        CellDirty[y * ProgressRes + x] = (R > 127);
+                    }
+                }
+                Mip.BulkData.Unlock();
+            }
+        }
+        else
+        {
+            UE_LOG(LogTemp, Warning, TEXT("%s: ShapeMask must use VectorDisplacementmap compression and NoMipmaps"), *GetName());
+        }
+    }
+
+    Total = CellDirty.CountSetBits();
 }
 
 float AWaterCleanZone::GetAreaWeight() const

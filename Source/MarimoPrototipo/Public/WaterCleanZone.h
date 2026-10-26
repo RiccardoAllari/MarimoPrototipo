@@ -34,6 +34,10 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Cleaning")
     TObjectPtr<UTexture2D> BrushTexture;            // soft white circle WITH alpha
 
+    // White = water/dirt area, black = outside. Same box mapping as the dirt mask. Leave empty for a full rectangle.
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Cleaning")
+    TObjectPtr<UTexture2D> ShapeMask;
+    
     UPROPERTY(EditAnywhere, Category = "Cleaning")
     int32 MaskRes = 512;                            // visual only
 
@@ -98,6 +102,7 @@ protected:
 private:
     void QueuePoint(const FVector2D& WorldXY);
     void FlushStamps();
+    void BuildDirtyCellsFromShape();
 
     UPROPERTY(Transient)
     TObjectPtr<UTextureRenderTarget2D> MaskRT;
