@@ -64,7 +64,6 @@ void AWaterCleanZone::BeginPlay()
     // Coarse progress grid
     CellCleaned.Init(false, ProgressRes * ProgressRes);
     BuildDirtyCellsFromShape();
-    DebugDrawDirtyCells();
 
     if (MID && ShapeMask)
     {
@@ -341,9 +340,14 @@ void AWaterCleanZone::EndPlay(const EEndPlayReason::Type EndPlayReason)
 
 FVector2D AWaterCleanZone::GetShapeSize() const
 {
-    if (ShapeWorldSize.X > 1.f && ShapeWorldSize.Y > 1.f) return ShapeWorldSize;
     const FVector E = Bounds->GetScaledBoxExtent();
-    return FVector2D(E.X * 2.f, E.Y * 2.f);
+
+    // Base size per axis: Shape World Size if set, otherwise the box size on that axis
+    const float BaseX = ShapeWorldSize.X > 1.f ? ShapeWorldSize.X : E.X * 2.f;
+    const float BaseY = ShapeWorldSize.Y > 1.f ? ShapeWorldSize.Y : E.Y * 2.f;
+
+    return FVector2D(FMath::Max(1.f, BaseX * ShapeScale.X),
+                     FMath::Max(1.f, BaseY * ShapeScale.Y));
 }
 
 void AWaterCleanZone::UpdateMaterialParams()
@@ -374,26 +378,6 @@ void AWaterCleanZone::UpdateMaterialParams()
     if (ShapeMask)
     {
         MID->SetTextureParameterValue(TEXT("ShapeMask"), ShapeMask);
-    }
-}
-
-void AWaterCleanZone::DebugDrawDirtyCells() const
-{
-    if (!bDebugShowCells) return;
-
-    const FVector C = Bounds->GetComponentLocation();
-    const FVector E = Bounds->GetScaledBoxExtent();
-    for (int32 y = 0; y < ProgressRes; ++y)
-    {
-        for (int32 x = 0; x < ProgressRes; ++x)
-        {
-            if (!CellDirty[y * ProgressRes + x]) continue;
-            const float Lx = ((x + 0.5f) / ProgressRes - 0.5f) * E.X * 2.f;
-            const float Ly = ((y + 0.5f) / ProgressRes - 0.5f) * E.Y * 2.f;
-            const FVector P = C + Bounds->GetForwardVector() * Lx
-                                + Bounds->GetRightVector() * Ly + FVector(0, 0, 20);
-            DrawDebugPoint(GetWorld(), P, 6.f, FColor::Red, true);
-        }
     }
 }
 
