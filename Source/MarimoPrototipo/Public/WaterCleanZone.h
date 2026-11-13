@@ -53,6 +53,19 @@ public:
     UPROPERTY(EditAnywhere, Category = "Cleaning")
     float FlushInterval = 0.05f;                    // seconds between GPU draws
 
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Cleaning|Shape")
+    float ShapeRotation = 0.f;                              // degrees
+
+    // Stretch multiplier along the shape's own X and Y axes. 1 = unchanged.
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Cleaning|Shape", meta = (ClampMin = "0.01"))
+    FVector2D ShapeScale = FVector2D(1.f, 1.f);
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Cleaning|Shape")
+    FVector2D ShapeWorldSize = FVector2D::ZeroVector;       // 0 = same size as the box. Keep X = Y to avoid stretching.
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Cleaning|Shape")
+    FVector2D ShapeOffset = FVector2D::ZeroVector;          // world units, in the box's local axes
+
     // ---- Events and queries ----
     UPROPERTY(BlueprintAssignable, Category = "Cleaning")
     FOnZoneCleaned OnZoneCleaned;
@@ -103,6 +116,8 @@ private:
     void QueuePoint(const FVector2D& WorldXY);
     void FlushStamps();
     void BuildDirtyCellsFromShape();
+    void UpdateMaterialParams();
+    FVector2D GetShapeSize() const;
 
     UPROPERTY(Transient)
     TObjectPtr<UTextureRenderTarget2D> MaskRT;
