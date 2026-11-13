@@ -10,6 +10,7 @@
 #include "Materials/MaterialInstanceDynamic.h"
 #include "WaterCleanProgressSubsystem.h"
 #include "TextureResource.h"
+#include "DrawDebugHelpers.h"
 
 AWaterCleanZone::AWaterCleanZone()
 {
@@ -42,6 +43,7 @@ void AWaterCleanZone::OnConstruction(const FTransform& Transform)
             WaterMesh->SetRelativeScale3D(FVector(E.X * 2.0 / MeshSize.X, E.Y * 2.0 / MeshSize.Y, Cur.Z));
         }
     }
+    UpdateMaterialParams();
 }
 
 void AWaterCleanZone::BeginPlay()
@@ -53,19 +55,16 @@ void AWaterCleanZone::BeginPlay()
     UKismetRenderingLibrary::ClearRenderTarget2D(this, MaskRT, FLinearColor::White);
 
     MID = WaterMesh->CreateDynamicMaterialInstance(0);
+    UpdateMaterialParams();
     if (MID)
     {
-        const FVector C = Bounds->GetComponentLocation();
-        const FVector E = Bounds->GetScaledBoxExtent();
         MID->SetTextureParameterValue(TEXT("DirtMask"), MaskRT);
-        MID->SetVectorParameterValue(TEXT("ZoneMin"), FLinearColor(C.X - E.X, C.Y - E.Y, 0.f));
-        MID->SetVectorParameterValue(TEXT("ZoneSize"), FLinearColor(E.X * 2.f, E.Y * 2.f, 0.f));
     }
 
     // Coarse progress grid
-    const int32 NumCells = ProgressRes * ProgressRes;
     CellCleaned.Init(false, ProgressRes * ProgressRes);
     BuildDirtyCellsFromShape();
+    DebugDrawDirtyCells();
 
     if (MID && ShapeMask)
     {
@@ -272,26 +271,54 @@ void AWaterCleanZone::BuildDirtyCellsFromShape()
             const uint8* Data = static_cast<const uint8*>(Mip.BulkData.LockReadOnly());
             if (Data)
             {
+                const FVector E = Bounds->GetScaledBoxExtent();
+                const FVector2D ShapeSize = GetShapeSize();
+                const float Rad = FMath::DegreesToRadians(ShapeRotation);
+                const float Cs = FMath::Cos(Rad), Sn = FMath::Sin(Rad);
+
                 for (int32 y = 0; y < ProgressRes; ++y)
                 {
                     for (int32 x = 0; x < ProgressRes; ++x)
                     {
-                        const int32 px = FMath::Clamp(int32((x + 0.5f) / ProgressRes * W), 0, W - 1);
-                        const int32 py = FMath::Clamp(int32((y + 0.5f) / ProgressRes * H), 0, H - 1);
-                        const uint8 R = Data[(py * W + px) * 4 + 2];   // BGRA: R is byte 2
-                        CellDirty[y * ProgressRes + x] = (R > 127);
+                        // Cell center in the box's local space (world units), minus the shape offset
+                        const float Lx = ((x + 0.5f) / ProgressRes - 0.5f) * E.X * 2.f - ShapeOffset.X;
+                        const float Ly = ((y + 0.5f) / ProgressRes - 0.5f) * E.Y * 2.f - ShapeOffset.Y;
+
+                        // Same math as the material: rotate into shape space, then normalize
+                        const float U = (Lx * Cs + Ly * Sn) / ShapeSize.X + 0.5f;
+                        const float V = (-Lx * Sn + Ly * Cs) / ShapeSize.Y + 0.5f;
+
+                        bool bDirty = false;
+                        if (U >= 0.f && U < 1.f && V >= 0.f && V < 1.f)
+                        {
+                            const int32 px = FMath::Clamp(int32(U * W), 0, W - 1);
+                            const int32 py = FMath::Clamp(int32(V * H), 0, H - 1);
+                            bDirty = Data[(py * W + px) * 4 + 2] > 127;   // BGRA: R is byte 2
+                        }
+                        CellDirty[y * ProgressRes + x] = bDirty;
                     }
                 }
                 Mip.BulkData.Unlock();
             }
+            else
+            {
+                UE_LOG(LogTemp, Warning, TEXT("%s: ShapeMask data could not be read (set Never Stream)"), *GetName());
+
+            }
         }
         else
         {
-            UE_LOG(LogTemp, Warning, TEXT("%s: ShapeMask must use VectorDisplacementmap compression and NoMipmaps"), *GetName());
+            UE_LOG(LogTemp, Warning, TEXT("%s: ShapeMask pixel format is %d, expected B8G8R8A8 (use VectorDisplacementmap, NoMipmaps)"),
+                 *GetName(), PD ? int32(PD->PixelFormat) : -1);
         }
     }
 
     Total = CellDirty.CountSetBits();
+    UE_LOG(LogTemp, Log, TEXT("%s: dirty cells %d of %d"), *GetName(), Total, NumCells);
+    if (Total == 0)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("%s: no dirty cells. The shape is outside the box or the mask is all black"), *GetName());
+    }
 }
 
 float AWaterCleanZone::GetAreaWeight() const
@@ -310,5 +337,63 @@ void AWaterCleanZone::EndPlay(const EEndPlayReason::Type EndPlayReason)
         }
     }
     Super::EndPlay(EndPlayReason);
+}
+
+FVector2D AWaterCleanZone::GetShapeSize() const
+{
+    if (ShapeWorldSize.X > 1.f && ShapeWorldSize.Y > 1.f) return ShapeWorldSize;
+    const FVector E = Bounds->GetScaledBoxExtent();
+    return FVector2D(E.X * 2.f, E.Y * 2.f);
+}
+
+void AWaterCleanZone::UpdateMaterialParams()
+{
+    if (!WaterMesh || !WaterMesh->GetMaterial(0)) return;
+
+    MID = WaterMesh->CreateDynamicMaterialInstance(0);
+    if (!MID) return;
+
+    const FVector C = Bounds->GetComponentLocation();
+    const FVector E = Bounds->GetScaledBoxExtent();
+    const FVector AxisX = Bounds->GetForwardVector();
+    const FVector AxisY = Bounds->GetRightVector();
+    const FVector2D ShapeSize = GetShapeSize();
+    const float Rad = FMath::DegreesToRadians(ShapeRotation);
+    const float Cs = FMath::Cos(Rad), Sn = FMath::Sin(Rad);
+
+    MID->SetVectorParameterValue(TEXT("ZoneCenter"), FLinearColor(C.X, C.Y, 0.f));
+    MID->SetVectorParameterValue(TEXT("ZoneSize"),   FLinearColor(E.X * 2.f, E.Y * 2.f, 0.f));
+    MID->SetVectorParameterValue(TEXT("ZoneAxisX"),  FLinearColor(AxisX.X, AxisX.Y, 0.f));
+    MID->SetVectorParameterValue(TEXT("ZoneAxisY"),  FLinearColor(AxisY.X, AxisY.Y, 0.f));
+
+    MID->SetVectorParameterValue(TEXT("ShapeAxisU"), FLinearColor(Cs, Sn, 0.f));
+    MID->SetVectorParameterValue(TEXT("ShapeAxisV"), FLinearColor(-Sn, Cs, 0.f));
+    MID->SetVectorParameterValue(TEXT("ShapeSize"),  FLinearColor(ShapeSize.X, ShapeSize.Y, 0.f));
+    MID->SetVectorParameterValue(TEXT("ShapeOffset"), FLinearColor(ShapeOffset.X, ShapeOffset.Y, 0.f));
+
+    if (ShapeMask)
+    {
+        MID->SetTextureParameterValue(TEXT("ShapeMask"), ShapeMask);
+    }
+}
+
+void AWaterCleanZone::DebugDrawDirtyCells() const
+{
+    if (!bDebugShowCells) return;
+
+    const FVector C = Bounds->GetComponentLocation();
+    const FVector E = Bounds->GetScaledBoxExtent();
+    for (int32 y = 0; y < ProgressRes; ++y)
+    {
+        for (int32 x = 0; x < ProgressRes; ++x)
+        {
+            if (!CellDirty[y * ProgressRes + x]) continue;
+            const float Lx = ((x + 0.5f) / ProgressRes - 0.5f) * E.X * 2.f;
+            const float Ly = ((y + 0.5f) / ProgressRes - 0.5f) * E.Y * 2.f;
+            const FVector P = C + Bounds->GetForwardVector() * Lx
+                                + Bounds->GetRightVector() * Ly + FVector(0, 0, 20);
+            DrawDebugPoint(GetWorld(), P, 6.f, FColor::Red, true);
+        }
+    }
 }
 
