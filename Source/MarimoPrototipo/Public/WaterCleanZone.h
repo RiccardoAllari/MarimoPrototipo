@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+
 #include "WaterCleanZone.generated.h"
 
 class AWaterCleanZone;
@@ -37,6 +38,10 @@ public:
     // White = water/dirt area, black = outside. Same box mapping as the dirt mask. Leave empty for a full rectangle.
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Cleaning")
     TObjectPtr<UTexture2D> ShapeMask;
+
+    // The water material asset (e.g. M_Water). The dynamic instance is always created from this.
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Cleaning")
+    TObjectPtr<UMaterialInterface> WaterMaterial;
     
     UPROPERTY(EditAnywhere, Category = "Cleaning")
     int32 MaskRes = 512;                            // visual only

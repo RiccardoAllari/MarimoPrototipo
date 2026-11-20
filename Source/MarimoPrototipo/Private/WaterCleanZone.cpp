@@ -10,6 +10,7 @@
 #include "Materials/MaterialInstanceDynamic.h"
 #include "WaterCleanProgressSubsystem.h"
 #include "TextureResource.h"
+#include "Materials/MaterialInterface.h"
 #include "DrawDebugHelpers.h"
 
 AWaterCleanZone::AWaterCleanZone()
@@ -352,10 +353,31 @@ FVector2D AWaterCleanZone::GetShapeSize() const
 
 void AWaterCleanZone::UpdateMaterialParams()
 {
-    if (!WaterMesh || !WaterMesh->GetMaterial(0)) return;
+    if (!WaterMesh) return;
 
-    MID = WaterMesh->CreateDynamicMaterialInstance(0);
+    // Always build the instance from the real material asset, never from whatever is in the slot
+    UMaterialInterface* Source = WaterMaterial;
+    if (!Source)
+    {
+        UMaterialInterface* Current = WaterMesh->GetMaterial(0);
+        if (const UMaterialInstanceDynamic* Existing = Cast<UMaterialInstanceDynamic>(Current))
+        {
+            Source = Existing->Parent;
+        }
+        else
+        {
+            Source = Current;
+        }
+    }
+    if (!Source)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("%s: no WaterMaterial set"), *GetName());
+        return;
+    }
+
+    MID = UMaterialInstanceDynamic::Create(Source, this);
     if (!MID) return;
+    WaterMesh->SetMaterial(0, MID);
 
     const FVector C = Bounds->GetComponentLocation();
     const FVector E = Bounds->GetScaledBoxExtent();
